@@ -12,15 +12,49 @@ class HomePage extends StatefulWidget {
 
 class _HomePageState extends State<HomePage> {
   final WeatherFactory _wf = WeatherFactory(OPENWEATHER_API_KEY);
+  final TextEditingController _searchController = TextEditingController();
 
   Weather? _weather;
+  bool _isLoading = false;
+  String _errorMessage = "";
+  String _currentCity = "Karachi";
+  final List<String> _recentSearches = ["Karachi"];
 
   @override
   void initState() {
     super.initState();
-    _wf.currentWeatherByCityName("Karachi").then((w) {
+    _fetchWeather(_currentCity);
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  void _fetchWeather(String city) {
+    if (city.trim().isEmpty) return;
+
+    setState(() {
+      _isLoading = true;
+      _errorMessage = "";
+    });
+
+    _wf.currentWeatherByCityName(city.trim()).then((w) {
       setState(() {
         _weather = w;
+        _isLoading = false;
+        _currentCity = city.trim();
+        // Add to recent — no duplicates, newest on top, max 10
+        _recentSearches.remove(city.trim());
+        _recentSearches.insert(0, city.trim());
+        if (_recentSearches.length > 10) _recentSearches.removeLast();
+        _searchController.clear();
+      });
+    }).catchError((e) {
+      setState(() {
+        _isLoading = false;
+        _errorMessage = "City not found. Please try again.";
       });
     });
   }
@@ -33,36 +67,127 @@ class _HomePageState extends State<HomePage> {
   }
 
   Widget _buildUI() {
-    if (_weather == null) {
-      return const Center(
-        child: CircularProgressIndicator(),
-      );
-    }
-    return SizedBox(
-      width: MediaQuery.sizeOf(context).width,
-      height: MediaQuery.sizeOf(context).height,
-      child: Column(
-        mainAxisSize: MainAxisSize.max,
-        mainAxisAlignment: MainAxisAlignment.center,
-        crossAxisAlignment: CrossAxisAlignment.center,
+    return SingleChildScrollView(
+      child: ConstrainedBox(
+        constraints: BoxConstraints(
+          minHeight: MediaQuery.sizeOf(context).height,
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            SizedBox(height: MediaQuery.sizeOf(context).height * 0.05),
+            _searchAndRecentRow(),
+            if (_errorMessage.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(top: 8.0),
+                child: Text(
+                  _errorMessage,
+                  style: const TextStyle(color: Colors.red, fontSize: 14),
+                ),
+              ),
+            if (_isLoading)
+              SizedBox(
+                height: MediaQuery.sizeOf(context).height * 0.8,
+                child: const Center(child: CircularProgressIndicator()),
+              )
+            else if (_weather != null) ...[
+              SizedBox(height: MediaQuery.sizeOf(context).height * 0.03),
+              _locationHeader(),
+              SizedBox(height: MediaQuery.sizeOf(context).height * 0.03),
+              _dateTimeInfo(),
+              SizedBox(height: MediaQuery.sizeOf(context).height * 0.02),
+              _weatherIcon(),
+              SizedBox(height: MediaQuery.sizeOf(context).height * 0.01),
+              _currentTemp(),
+              SizedBox(height: MediaQuery.sizeOf(context).height * 0.02),
+              _extraInfo(),
+              SizedBox(height: MediaQuery.sizeOf(context).height * 0.03),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Search TextField + Recent Searches dropdown side by side
+  Widget _searchAndRecentRow() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 20.0),
+      child: Row(
         children: [
-          _locationHeader(),
-          SizedBox(
-            height: MediaQuery.sizeOf(context).height * 0.08,
+          // ── Search field ──────────────────────────────────────
+          Expanded(
+            child: TextField(
+              controller: _searchController,
+              textInputAction: TextInputAction.search,
+              onSubmitted: (value) => _fetchWeather(value),
+              decoration: InputDecoration(
+                hintText: "Enter city name...",
+                prefixIcon: const Icon(Icons.search, color: Colors.deepPurpleAccent),
+                suffixIcon: IconButton(
+                  icon: const Icon(Icons.arrow_forward, color: Colors.deepPurpleAccent),
+                  onPressed: () => _fetchWeather(_searchController.text),
+                ),
+                contentPadding:
+                    const EdgeInsets.symmetric(vertical: 0, horizontal: 16),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(30),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(30),
+                  borderSide:
+                      const BorderSide(color: Colors.deepPurpleAccent, width: 2),
+                ),
+              ),
+            ),
           ),
-          _dateTimeInfo(),
-          SizedBox(
-            height: MediaQuery.sizeOf(context).height * 0.05,
+
+          const SizedBox(width: 10),
+
+          // ── Recent searches dropdown ───────────────────────────
+          Container(
+            decoration: BoxDecoration(
+              border: Border.all(color: Colors.deepPurpleAccent, width: 2),
+              borderRadius: BorderRadius.circular(30),
+            ),
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            child: DropdownButtonHideUnderline(
+              child: DropdownButton<String>(
+                hint: const Row(
+                  children: [
+                    Icon(Icons.history, color: Colors.deepPurpleAccent, size: 20),
+                    SizedBox(width: 4),
+                    Text(
+                      "Recent",
+                      style: TextStyle(
+                          color: Colors.deepPurpleAccent, fontSize: 14),
+                    ),
+                  ],
+                ),
+                icon: const Icon(Icons.keyboard_arrow_down,
+                    color: Colors.deepPurpleAccent),
+                // Always show hint — don't highlight a selected value
+                value: null,
+                items: _recentSearches.map((String city) {
+                  return DropdownMenuItem<String>(
+                    value: city,
+                    child: Row(
+                      children: [
+                        const Icon(Icons.location_on,
+                            color: Colors.deepPurpleAccent, size: 16),
+                        const SizedBox(width: 6),
+                        Text(city, style: const TextStyle(fontSize: 14)),
+                      ],
+                    ),
+                  );
+                }).toList(),
+                onChanged: (String? selected) {
+                  if (selected != null) _fetchWeather(selected);
+                },
+              ),
+            ),
           ),
-          _weatherIcon(),
-          SizedBox(
-            height: MediaQuery.sizeOf(context).height * 0.02,
-          ),
-          _currentTemp(),
-          SizedBox(
-            height: MediaQuery.sizeOf(context).height * 0.02,
-          ),
-          _extraInfo(),
         ],
       ),
     );
@@ -86,9 +211,7 @@ class _HomePageState extends State<HomePage> {
           DateFormat("h:mm a").format(now),
           style: const TextStyle(fontSize: 35),
         ),
-        const SizedBox(
-          height: 10,
-        ),
+        const SizedBox(height: 10),
         Row(
           mainAxisSize: MainAxisSize.max,
           mainAxisAlignment: MainAxisAlignment.center,
@@ -98,8 +221,9 @@ class _HomePageState extends State<HomePage> {
               DateFormat("EEEE").format(now),
               style: const TextStyle(fontWeight: FontWeight.w700),
             ),
+            const SizedBox(width: 6),
             Text(
-              "${DateFormat("d.m.y").format(now)}",
+              DateFormat("d.M.y").format(now),
               style: const TextStyle(fontWeight: FontWeight.w500),
             ),
           ],
@@ -151,13 +275,9 @@ class _HomePageState extends State<HomePage> {
       width: MediaQuery.sizeOf(context).width * 0.80,
       decoration: BoxDecoration(
         color: Colors.deepPurpleAccent,
-        borderRadius: BorderRadius.circular(
-          20,
-        ),
+        borderRadius: BorderRadius.circular(20),
       ),
-      padding: const EdgeInsets.all(
-        8.0,
-      ),
+      padding: const EdgeInsets.all(8.0),
       child: Column(
         mainAxisAlignment: MainAxisAlignment.spaceEvenly,
         crossAxisAlignment: CrossAxisAlignment.center,
@@ -169,17 +289,11 @@ class _HomePageState extends State<HomePage> {
             children: [
               Text(
                 "Max: ${_weather?.tempMax?.celsius?.toStringAsFixed(0)}° C",
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 16,
-                ),
+                style: const TextStyle(color: Colors.white, fontSize: 16),
               ),
               Text(
                 "Min: ${_weather?.tempMin?.celsius?.toStringAsFixed(0)}° C",
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 16,
-                ),
+                style: const TextStyle(color: Colors.white, fontSize: 16),
               )
             ],
           ),
@@ -190,17 +304,11 @@ class _HomePageState extends State<HomePage> {
             children: [
               Text(
                 "Wind: ${_weather?.windSpeed?.toStringAsFixed(0)}m/s",
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 16,
-                ),
+                style: const TextStyle(color: Colors.white, fontSize: 16),
               ),
               Text(
                 "Humidity: ${_weather?.humidity?.toStringAsFixed(0)}%",
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 16,
-                ),
+                style: const TextStyle(color: Colors.white, fontSize: 16),
               )
             ],
           )
